@@ -1,0 +1,286 @@
+openapi: 3.0.3
+info:
+  title: P04 – API des tickets de support
+  version: 1.0.0
+  description: |
+    Webhooks n8n du canal « API » de l'assistant de support Odoo.
+
+    Un ticket créé ici est enregistré (statut `recu`), puis traité en arrière-plan :
+    classification par le LLM → réponse suggérée avec sources (RAG) → réponse automatique
+    (`resolu`) ou escalade à un humain (`escalade`). Sur un CPU, le traitement prend en
+    général 20 à 90 secondes : interrogez `GET /tickets/{id}` pour suivre l'avancement.
+
+    Toutes les routes exigent l'en-tête `X-API-Key` (valeur `TICKETS_API_KEY` du `.env`).
+servers:
+  - url: http://localhost:5679/webhook
+    description: n8n local (docker compose)
+security:
+  - ApiKey: []
+tags:
+  - name: Tickets
+  - name: Base de connaissances
+
+paths:
+  /tickets:
+    post:
+      tags: [Tickets]
+      summary: Créer un ticket
+      operationId: createTicket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TicketCreate' }
+            examples:
+              simple:
+                summary: Question courante (réponse automatique attendue)
+                value:
+                  subject: Mot de passe oublié
+                  message: Bonjour, j'ai oublié mon mot de passe Odoo, comment le réinitialiser ?
+                  customer: { name: Marie Dupont, email: marie.dupont@exemple.test }
+              critique:
+                summary: Incident critique (escalade attendue)
+                value:
+                  subject: Production inaccessible
+                  message: Plus personne ne peut se connecter à Odoo depuis ce matin, toute la société est bloquée !
+                  customer: { name: Paul Martin, email: paul.martin@exemple.test }
+              humain:
+                summary: Demande explicite d'un humain
+                value:
+                  message: Je voudrais parler à un conseiller au sujet de notre facturation.
+      responses:
+        '202':
+          description: Ticket créé, traitement lancé en arrière-plan
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TicketAccepted' }
+        '200':
+          description: Ticket déjà existant (même `external_id`) – rien n'est relancé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TicketAccepted' }
+        '400':
+          description: Requête invalide
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /tickets/{id}:
+    get:
+      tags: [Tickets]
+      summary: Lire un ticket (statut, classification, réponse, sources, horodatages)
+      operationId: getTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '200':
+          description: Le ticket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /tickets/{id}/resolve:
+    post:
+      tags: [Tickets]
+      summary: Clore un ticket (action d'un humain)
+      description: |
+        Passe le ticket au statut `resolu`. Si `answer` est fourni, la réponse est enregistrée
+        et envoyée au client par son canal d'origine (e-mail ou Telegram).
+      operationId: resolveTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TicketResolve' }
+            example:
+              answer: Nous avons redémarré le serveur, l'accès est rétabli. Merci de votre patience.
+              agent: Kevin
+              note: Redémarrage du worker Odoo.sh
+      responses:
+        '200':
+          description: Ticket clos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket_id: { type: integer, example: 12 }
+                  status: { type: string, example: resolu }
+                  resolved_at: { type: string, format: date-time }
+                  answer_sent: { type: boolean, description: Réponse envoyée par e-mail ou Telegram }
+        '404':
+          description: Ticket introuvable ou déjà résolu
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /kb/reindex:
+    post:
+      tags: [Base de connaissances]
+      summary: (Ré)indexer la base de connaissances
+      description: Relit `knowledge-base/*.md`, recalcule les embeddings et remplace la table `kb_chunks`.
+      operationId: reindexKb
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                only_if_empty:
+                  type: boolean
+                  default: false
+                  description: N'indexe que si la table est vide
+      responses:
+        '200':
+          description: Résultat de l'indexation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok, skipped] }
+                  chunks: { type: integer }
+                  documents: { type: integer }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  parameters:
+    TicketId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+
+  responses:
+    NotFound:
+      description: Ticket introuvable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: En-tête X-API-Key absent ou invalide (réponse générée par n8n)
+
+  schemas:
+    Category:
+      type: string
+      enum: [acces_connexion, facturation_comptabilite, ventes_crm, achats_stock,
+             import_export, technique_bug, hebergement_odoosh, autre]
+    Priority:
+      type: string
+      enum: [basse, normale, haute, critique]
+    Status:
+      type: string
+      enum: [recu, classe, escalade, resolu]
+      description: |
+        `recu` → `classe` → `resolu` (réponse automatique) ou `escalade` → `resolu` (humain).
+
+    TicketCreate:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string, minLength: 5, maxLength: 10000, description: Texte de la demande }
+        subject: { type: string, maxLength: 200 }
+        customer:
+          type: object
+          properties:
+            name: { type: string, maxLength: 120 }
+            email: { type: string, format: email }
+        external_id:
+          type: string
+          maxLength: 200
+          description: Identifiant côté appelant ; deux appels avec la même valeur = un seul ticket
+
+    TicketAccepted:
+      type: object
+      properties:
+        ticket_id: { type: integer, example: 12 }
+        status: { $ref: '#/components/schemas/Status' }
+        received_at: { type: string, format: date-time }
+        duplicate: { type: boolean }
+        links:
+          type: object
+          properties:
+            self: { type: string, example: 'http://localhost:5679/webhook/tickets/12' }
+
+    Source:
+      type: object
+      properties:
+        n: { type: integer, description: Numéro cité dans la réponse, example: 1 }
+        title: { type: string, example: Connexion et mot de passe }
+        section: { type: string, example: Mot de passe oublié }
+        path: { type: string, example: 01-connexion-mot-de-passe.md }
+        similarity: { type: number, example: 0.71 }
+
+    Ticket:
+      type: object
+      properties:
+        ticket_id: { type: integer }
+        channel: { type: string, enum: [webhook, email, telegram] }
+        status: { $ref: '#/components/schemas/Status' }
+        subject: { type: string, nullable: true }
+        message: { type: string }
+        customer_name: { type: string, nullable: true }
+        customer_contact: { type: string, nullable: true }
+        category: { allOf: [{ $ref: '#/components/schemas/Category' }], nullable: true }
+        priority: { allOf: [{ $ref: '#/components/schemas/Priority' }], nullable: true }
+        confidence: { type: number, minimum: 0, maximum: 1, nullable: true }
+        wants_human: { type: boolean }
+        summary: { type: string, nullable: true }
+        suggested_answer:
+          type: string
+          nullable: true
+          description: Brouillon RAG (envoyé au client seulement si le ticket n'est pas escaladé)
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/Source' }
+        answerable: { type: boolean, nullable: true }
+        final_answer: { type: string, nullable: true, description: Réponse réellement envoyée }
+        answered_by: { type: string, enum: [bot, humain], nullable: true }
+        escalated: { type: boolean }
+        escalation_reasons:
+          type: array
+          items:
+            type: string
+            enum: [demande_humain, priorite_haute, confiance_faible, hors_base, erreur_technique]
+        resolved_by: { type: string, enum: [bot, humain], nullable: true }
+        resolution_note: { type: string, nullable: true }
+        received_at: { type: string, format: date-time }
+        classified_at: { type: string, format: date-time, nullable: true }
+        answered_at: { type: string, format: date-time, nullable: true }
+        escalated_at: { type: string, format: date-time, nullable: true }
+        resolved_at: { type: string, format: date-time, nullable: true }
+
+    TicketResolve:
+      type: object
+      properties:
+        answer: { type: string, description: Réponse à envoyer au client (facultatif) }
+        agent: { type: string, description: Nom de l'agent }
+        note: { type: string, description: Note interne de résolution }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string, example: not_found }
+        message: { type: string }
+
+    ValidationError:
+      type: object
+      properties:
+        error: { type: string, example: validation }
+        details:
+          type: array
+          items: { type: string }
+          example: ['message : obligatoire (5 caractères minimum)']

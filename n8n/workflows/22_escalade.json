@@ -1,0 +1,484 @@
+{
+  "id": "p04Escalade00001",
+  "name": "P04 · 22 Escalade ou réponse automatique",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Escalade à un humain\nLe ticket part chez un humain si au moins une règle est vraie :\n- `demande_humain` : le client demande un conseiller ;\n- `priorite_haute` : priorité **haute** ou **critique** ;\n- `confiance_faible` : confiance < `CONFIDENCE_MIN` (.env, 0,6) ;\n- `hors_base` : aucune source assez proche ou le LLM ne sait pas répondre ;\n- `erreur_technique` : le LLM ou la recherche a échoué.\n\n**Escalade** → statut `escalade`, e-mail à `AGENT_EMAIL` (visible dans Mailpit, http://localhost:8025) avec le brouillon et la commande pour clore, Telegram à l'agent si configuré, accusé de réception au client.\n**Sinon** → la réponse avec ses sources part au client ; statut `resolu` (résolution au premier contact).",
+        "height": 420,
+        "width": 520
+      },
+      "id": "9fb48411-df2c-58b6-8e76-79d77538e4f9",
+      "name": "Mode d'emploi",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        -380
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "24077fe2-4434-5e91-8acf-25d3a1ee827e",
+      "name": "Ticket analysé",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, channel, customer_name, customer_contact, subject, body, category, priority,\n       confidence::float AS confidence, wants_human, summary, classification_reason,\n       suggested_answer, sources, answerable, processing_error\nFROM tickets WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [ $json.ticket_id ] }}"
+        }
+      },
+      "id": "33320f99-536c-5f9b-8e42-e87cbd83bae3",
+      "name": "Lire ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = $json;\nconst CONF_MIN = Number($env.CONFIDENCE_MIN || 0.6);\nconst sources = Array.isArray(t.sources) ? t.sources : JSON.parse(t.sources || '[]');\nconst reasons = [];\nif (t.wants_human) reasons.push('demande_humain');\nif (['haute', 'critique'].includes(t.priority)) reasons.push('priorite_haute');\nif (Number(t.confidence || 0) < CONF_MIN) reasons.push('confiance_faible');\nif (!t.answerable || !t.suggested_answer || !sources.length) reasons.push('hors_base');\nif (t.processing_error) reasons.push('erreur_technique');\n\nconst SLA = { critique: '1 heure', haute: '4 heures ouvrées', normale: '1 jour ouvré', basse: '3 jours ouvrés' };\nconst hello = t.customer_name ? `Bonjour ${t.customer_name},` : 'Bonjour,';\nconst srcLines = sources.map(s => `[${s.n}] ${s.title} › ${s.section}`).join('\\n');\nconst autoAnswer = `${hello}\\n\\n${t.suggested_answer}\\n\\nSources :\\n${srcLines}\\n\\n` +\n  `Référence : ticket n°${t.id}. Si cela ne règle pas votre problème, répondez « je veux parler à un conseiller ».\\nL'assistant du support`;\nconst ack = `${hello}\\n\\nNous avons bien reçu votre demande (ticket n°${t.id}). Elle a été transmise à un conseiller du support` +\n  ` (priorité ${t.priority || 'normale'}, prise en charge sous ${SLA[t.priority] || SLA.normale}).\\nL'équipe support`;\nconst api = $env.PUBLIC_API_URL;\nconst draft = t.suggested_answer ? `${t.suggested_answer}\\n\\nSources :\\n${srcLines}` : '(aucun brouillon : la base de connaissances ne couvre pas la demande)';\nconst agentText = [\n  `Ticket n°${t.id} escaladé — ${reasons.join(', ')}`, '',\n  `Canal : ${t.channel}   Client : ${t.customer_name || '-'} <${t.customer_contact || '-'}>`,\n  `Catégorie : ${t.category}   Priorité : ${t.priority}   Confiance : ${t.confidence}`,\n  `Résumé : ${t.summary || '-'}`, `Justification : ${t.classification_reason || '-'}`,\n  t.processing_error ? `Erreur : ${t.processing_error}` : null, '',\n  '--- Message du client ---', t.subject ? `Sujet : ${t.subject}` : null, t.body, '',\n  '--- Brouillon de réponse (RAG) ---', draft, '',\n  '--- Répondre et clore ---',\n  `curl -X POST ${api}/tickets/${t.id}/resolve -H \"X-API-Key: $TICKETS_API_KEY\" -H \"Content-Type: application/json\" \\\\`,\n  `     -d '{\"answer\": \"Votre réponse…\", \"agent\": \"Prénom\"}'`,\n  `Détail : curl ${api}/tickets/${t.id} -H \"X-API-Key: $TICKETS_API_KEY\"`,\n].filter(l => l !== null).join('\\n');\nreturn { json: {\n  ticket_id: Number(t.id), channel: t.channel, contact: t.customer_contact, subject: t.subject,\n  priority: t.priority, escalate: reasons.length > 0, reasons, auto_answer: autoAnswer, ack,\n  agent_subject: `[Escalade][${t.priority}] Ticket n°${t.id} — ${(t.summary || t.subject || '').slice(0, 80)}`,\n  agent_text: agentText,\n} };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "a0bb96ca-82ca-5951-856d-4cc948027a35",
+      "name": "Décision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7656333f-f91b-406f-8e5b-a64a6b6a6270",
+              "leftValue": "={{ $json.escalate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "630ed515-02a0-5828-b3bb-d7c00012e6af",
+      "name": "Escalader ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE tickets\nSET status = 'escalade', escalated = true, escalated_at = now(),\n    escalation_reasons = ARRAY(SELECT jsonb_array_elements_text($2::jsonb))\nWHERE id = $1\nRETURNING id AS ticket_id;",
+        "options": {
+          "queryReplacement": "={{ [ $json.ticket_id, JSON.stringify($json.reasons) ] }}"
+        }
+      },
+      "id": "cead8dc4-02a8-55aa-aa89-114715771387",
+      "name": "Marquer escaladé",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        880,
+        -200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SUPPORT_FROM_EMAIL }}",
+        "toEmail": "={{ $env.AGENT_EMAIL }}",
+        "subject": "={{ $('Décision').item.json.agent_subject }}",
+        "emailFormat": "text",
+        "text": "={{ $('Décision').item.json.agent_text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "ebf0b42e-5395-538d-8665-d105b98eaa8b",
+      "name": "E-mail à l'agent",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        -320
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "p04CredSmtpMail1",
+          "name": "P04 SMTP Mailpit"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "88d499e7-4c0f-4455-8a2b-480b8af6dfd4",
+              "leftValue": "={{ !!$env.TELEGRAM_BOT_TOKEN && !!$env.TELEGRAM_AGENT_CHAT_ID }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "ddc781a0-017a-52e8-81be-bbd88104f216",
+      "name": "Telegram agent ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_AGENT_CHAT_ID, text: ($('Décision').item.json.agent_subject + '\\n\\n' + $('Décision').item.json.agent_text).slice(0, 4000) }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "e3ea4b6d-1075-57a1-b6f4-32b0ac251064",
+      "name": "Telegram à l'agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -180
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Décision').item.json;\nreturn { json: { ticket_id: d.ticket_id, channel: d.channel, contact: d.contact, subject: d.subject, text: d.ack } };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "824f3f3a-03c7-5fde-8f91-f339dfb8c483",
+      "name": "Accusé au client",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "p04EnvoiRepons01",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "078daf4e-4913-5f77-bc07-01b8a8ffeb05",
+      "name": "Envoyer l'accusé",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE tickets\nSET status = 'resolu', final_answer = $2, answered_by = 'bot', resolved_by = 'bot',\n    answered_at = now(), resolved_at = now()\nWHERE id = $1\nRETURNING id AS ticket_id;",
+        "options": {
+          "queryReplacement": "={{ [ $json.ticket_id, $json.auto_answer ] }}"
+        }
+      },
+      "id": "2273df0b-5bdc-53ec-a2a7-c476f22f5c2b",
+      "name": "Marquer résolu (bot)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        880,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Décision').item.json;\nreturn { json: { ticket_id: d.ticket_id, channel: d.channel, contact: d.contact, subject: d.subject, text: d.auto_answer } };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "a5951509-a226-5fe2-9aa2-c5974d721bfa",
+      "name": "Réponse au client",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "p04EnvoiRepons01",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "44387ec1-a1b3-51cd-80f5-ecd7c935e1c6",
+      "name": "Envoyer la réponse",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Décision').first().json;\nreturn [{ json: { ticket_id: d.ticket_id, escalated: d.escalate, reasons: d.reasons } }];"
+      },
+      "id": "b2f8bcaa-e968-5543-b43d-2b6ec3ade1f3",
+      "name": "Résultat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Ticket analysé": {
+      "main": [
+        [
+          {
+            "node": "Lire ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire ticket": {
+      "main": [
+        [
+          {
+            "node": "Décision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Décision": {
+      "main": [
+        [
+          {
+            "node": "Escalader ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalader ?": {
+      "main": [
+        [
+          {
+            "node": "Marquer escaladé",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Marquer résolu (bot)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marquer escaladé": {
+      "main": [
+        [
+          {
+            "node": "E-mail à l'agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram agent ?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Accusé au client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram agent ?": {
+      "main": [
+        [
+          {
+            "node": "Telegram à l'agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accusé au client": {
+      "main": [
+        [
+          {
+            "node": "Envoyer l'accusé",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer l'accusé": {
+      "main": [
+        [
+          {
+            "node": "Résultat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marquer résolu (bot)": {
+      "main": [
+        [
+          {
+            "node": "Réponse au client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Réponse au client": {
+      "main": [
+        [
+          {
+            "node": "Envoyer la réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer la réponse": {
+      "main": [
+        [
+          {
+            "node": "Résultat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "saveManualExecutions": true,
+    "callerPolicy": "any"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {},
+  "tags": []
+}

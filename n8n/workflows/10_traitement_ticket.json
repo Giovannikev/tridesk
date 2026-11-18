@@ -1,0 +1,191 @@
+{
+  "id": "p04Orchestrat001",
+  "name": "P04 · 10 Traitement d'un ticket",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Traitement d'un ticket\nAppelé par chaque canal avec `{ ticket_id }`, après l'enregistrement du ticket (statut `recu`).\n\n1. **20 Classification** : catégorie, priorité, confiance (JSON structuré) → `classe`.\n2. **21 Réponse RAG** : recherche pgvector + réponse rédigée avec ses sources.\n3. **22 Escalade ou réponse** : réponse automatique au client (`resolu`) ou escalade à un humain (`escalade`).\n\nChaque étape est un sous-workflow testable seul (bouton *Execute* avec un `ticket_id` épinglé).",
+        "height": 300,
+        "width": 480
+      },
+      "id": "47d2de12-96d9-5e5f-893e-0110fda61931",
+      "name": "Mode d'emploi",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "eccf7acb-1e71-5071-a1b2-5578700763ce",
+      "name": "Appel d'un canal",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const id = Number($json.ticket_id ?? $json.id);\nif (!id) throw new Error('ticket_id manquant');\nreturn { json: { ticket_id: id } };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "3d81d529-4e87-5fde-86de-e692a1996843",
+      "name": "Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "p04Classifier001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "3fce7710-d3d7-5df5-9d44-caa40d4b8d7c",
+      "name": "20 · Classification",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "p04ReponseRag001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "c28408e3-59da-51ac-ab48-a46b9684ebe6",
+      "name": "21 · Réponse RAG",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "p04Escalade00001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "6b904b8c-1461-58ca-9779-9f6528fa701a",
+      "name": "22 · Escalade ou réponse",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Appel d'un canal": {
+      "main": [
+        [
+          {
+            "node": "Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket": {
+      "main": [
+        [
+          {
+            "node": "20 · Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "20 · Classification": {
+      "main": [
+        [
+          {
+            "node": "21 · Réponse RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "21 · Réponse RAG": {
+      "main": [
+        [
+          {
+            "node": "22 · Escalade ou réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "saveManualExecutions": true,
+    "callerPolicy": "any"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {},
+  "tags": []
+}

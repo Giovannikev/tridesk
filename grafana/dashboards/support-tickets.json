@@ -1,0 +1,1017 @@
+{
+  "uid": "p04-support-tickets",
+  "title": "P04 · Support et tri des tickets",
+  "tags": [
+    "p04",
+    "support",
+    "n8n"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "description": "Délais de traitement, volumes par catégorie et priorité, taux d'escalade.",
+  "templating": {
+    "list": [
+      {
+        "name": "canal",
+        "label": "Canal",
+        "type": "custom",
+        "query": "webhook,email,telegram",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": []
+      },
+      {
+        "name": "demo",
+        "label": "Données de démo",
+        "type": "custom",
+        "query": "non,oui",
+        "multi": false,
+        "includeAll": false,
+        "current": {
+          "selected": true,
+          "text": "non",
+          "value": "non"
+        },
+        "options": []
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Tickets reçus",
+      "description": "Tickets reçus sur la période, tous canaux sélectionnés.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(*) AS tickets FROM tickets WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui')"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Taux d'escalade",
+      "description": "Part des tickets traités envoyés à un humain.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT coalesce(avg(CASE WHEN escalated THEN 1.0 ELSE 0 END), 0) AS taux FROM tickets WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui') AND status <> 'recu'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.4
+              },
+              {
+                "color": "red",
+                "value": 0.6
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "1re réponse auto (médiane)",
+      "description": "Délai médian entre réception et réponse automatique (RAG).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY first_response_s) AS s FROM v_ticket_durations WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui') AND answered_by = 'bot'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 120
+              },
+              {
+                "color": "red",
+                "value": 600
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Résolution humaine (médiane)",
+      "description": "Délai médian entre réception et clôture par un humain (tickets escaladés).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY resolution_s) AS s FROM v_ticket_durations WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui') AND resolved_by = 'humain'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 14400
+              },
+              {
+                "color": "red",
+                "value": 86400
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Escaladés en attente",
+      "description": "Tickets escaladés pas encore clos (indépendant de la période).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT count(*) AS n FROM tickets WHERE status = 'escalade' AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui')"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Confiance moyenne",
+      "description": "Confiance moyenne donnée par le LLM à sa classification.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT avg(confidence) AS c FROM tickets WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui') AND confidence IS NOT NULL"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.6
+              },
+              {
+                "color": "green",
+                "value": 0.75
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Tickets par canal",
+      "description": "Volume reçu par intervalle et par canal.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(received_at, $__interval), channel AS metric, count(*) AS value FROM tickets WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui') GROUP BY 1, 2 ORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Délais de traitement (médianes)",
+      "description": "Délai médian depuis la réception, par étape. Échelle logarithmique : de quelques secondes (LLM) à plusieurs heures (humain).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(received_at, $__interval),\n       percentile_cont(0.5) WITHIN GROUP (ORDER BY classification_s) AS \"Classification\",\n       percentile_cont(0.5) WITHIN GROUP (ORDER BY first_response_s) FILTER (WHERE answered_by = 'bot') AS \"1re réponse (bot)\",\n       percentile_cont(0.5) WITHIN GROUP (ORDER BY escalation_s) AS \"Escalade\",\n       percentile_cont(0.5) WITHIN GROUP (ORDER BY resolution_s) FILTER (WHERE resolved_by = 'humain') AS \"Résolution (humain)\"\nFROM v_ticket_durations WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui')\nGROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true,
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "barchart",
+      "title": "Volume par catégorie",
+      "description": "Tickets par catégorie, en distinguant réponse automatique et escalade.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT coalesce(category, 'non classé') AS \"Catégorie\",\n       count(*) FILTER (WHERE NOT escalated) AS \"Réponse automatique\",\n       count(*) FILTER (WHERE escalated) AS \"Escaladé\"\nFROM tickets WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui')\nGROUP BY 1 ORDER BY count(*) DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Réponse automatique"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Escaladé"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "showValue": "auto",
+        "barWidth": 0.7,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "xTickLabelMaxLength": 26
+      }
+    },
+    {
+      "id": 10,
+      "type": "piechart",
+      "title": "Volume par priorité",
+      "description": "Répartition des tickets par priorité.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 6,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT coalesce(priority, 'non classé') AS metric, count(*) AS value\nFROM tickets WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui') GROUP BY 1\nORDER BY array_position(ARRAY['critique','haute','normale','basse','non classé'], coalesce(priority, 'non classé'))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "critique"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "haute"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "normale"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "basse"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "non classé"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "displayLabels": []
+      }
+    },
+    {
+      "id": 11,
+      "type": "barchart",
+      "title": "Raisons d'escalade",
+      "description": "Un ticket peut avoir plusieurs raisons.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 12,
+        "w": 6,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT r AS \"Raison\", count(*) AS \"Tickets\"\nFROM tickets, unnest(escalation_reasons) AS r\nWHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui') GROUP BY 1 ORDER BY 2 DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always",
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "xTickLabelMaxLength": 20
+      }
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Délais et escalade par priorité",
+      "description": "Synthèse par priorité (secondes converties automatiquement).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT priority AS \"Priorité\", count(*) AS \"Tickets\",\n       avg(CASE WHEN escalated THEN 1.0 ELSE 0 END) AS \"Taux d'escalade\",\n       avg(classification_s) AS \"Classification (moy.)\",\n       percentile_cont(0.5) WITHIN GROUP (ORDER BY first_response_s) AS \"1re réponse (médiane)\",\n       percentile_cont(0.5) WITHIN GROUP (ORDER BY resolution_s) AS \"Résolution (médiane)\",\n       percentile_cont(0.9) WITHIN GROUP (ORDER BY resolution_s) AS \"Résolution (p90)\"\nFROM v_ticket_durations WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui') AND priority IS NOT NULL\nGROUP BY priority\nORDER BY array_position(ARRAY['critique','haute','normale','basse'], priority)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Tickets"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Priorité"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "string"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Taux d'escalade"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Escaladés en attente d'un humain",
+      "description": "À traiter : clore avec POST /webhook/tickets/{id}/resolve.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 21,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT id AS \"N°\", EXTRACT(EPOCH FROM now() - received_at) AS \"Attente\", priority AS \"Priorité\", category AS \"Catégorie\",\n       array_to_string(escalation_reasons, ', ') AS \"Raisons\", channel AS \"Canal\", coalesce(summary, subject) AS \"Résumé\"\nFROM tickets\nWHERE status = 'escalade' AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui')\nORDER BY array_position(ARRAY['critique','haute','normale','basse'], priority), received_at\nLIMIT 50"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Attente"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Derniers tickets",
+      "description": "Délai de traitement = jusqu'à la réponse automatique ou à l'escalade.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "p04-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "p04-pg"
+          },
+          "rawQuery": true,
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT id AS \"N°\", received_at AS \"Reçu\", channel AS \"Canal\", status AS \"Statut\", category AS \"Catégorie\",\n       priority AS \"Priorité\", confidence AS \"Confiance\", jsonb_array_length(sources) AS \"Sources\",\n       EXTRACT(EPOCH FROM coalesce(answered_at, escalated_at) - received_at) AS \"Délai de traitement\",\n       coalesce(summary, subject) AS \"Résumé\"\nFROM tickets WHERE $__timeFilter(received_at) AND channel IN (${canal:sqlstring}) AND (NOT is_demo OR '${demo}' = 'oui')\nORDER BY received_at DESC LIMIT 100"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Délai de traitement"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Confiance"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    }
+  ]
+}

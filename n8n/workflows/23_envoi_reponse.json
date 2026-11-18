@@ -1,0 +1,224 @@
+{
+  "id": "p04EnvoiRepons01",
+  "name": "P04 · 23 Envoi d'une réponse au client",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Envoi d'une réponse au client\nEntrée : `{ ticket_id, channel, contact, subject, text }`.\n- **email** → SMTP (credential *P04 SMTP Mailpit* : tout arrive dans Mailpit en local) ;\n- **telegram** → `sendMessage` au `chat_id` du client ;\n- **webhook** → rien à envoyer : l'appelant lit la réponse avec `GET /webhook/tickets/{id}`.",
+        "height": 260,
+        "width": 460
+      },
+      "id": "5fb79fd9-04c1-54b3-a0cd-86ce3cd162c4",
+      "name": "Mode d'emploi",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "b359acd5-89f7-5654-baf6-e94b677c5672",
+      "name": "Réponse à envoyer",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "bb0cbbca-2db1-43c0-a78b-4d4421fcde22",
+              "leftValue": "={{ $json.channel === 'email' && !!$json.contact }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "9ed717f6-c036-5a70-bd19-c84a305809dd",
+      "name": "E-mail ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SUPPORT_FROM_EMAIL }}",
+        "toEmail": "={{ $json.contact }}",
+        "subject": "=Re: {{ $json.subject || 'Votre demande' }} [Ticket n°{{ $json.ticket_id }}]",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "5c181fbb-4639-5935-a2b9-a96eca6f2736",
+      "name": "Envoi e-mail",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        440,
+        -100
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "p04CredSmtpMail1",
+          "name": "P04 SMTP Mailpit"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "764387ec-443b-444f-8bbe-eeeda4025993",
+              "leftValue": "={{ $json.channel === 'telegram' && !!$json.contact && !!$env.TELEGRAM_BOT_TOKEN }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "d1985e39-3f50-5893-b6e8-7d7c450e68cd",
+      "name": "Telegram ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $json.contact, text: $json.text.slice(0, 4000) }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "c7fac429-347c-5b9b-8cc4-fe9107474a61",
+      "name": "Envoi Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(i => ({ json: { ticket_id: i.json.ticket_id, channel: i.json.channel, sent: false,\n  info: 'canal webhook : réponse disponible via GET /webhook/tickets/{id}' } }));"
+      },
+      "id": "1a95cbb5-d526-5ed7-973e-3017a5c030c9",
+      "name": "Rien à envoyer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Réponse à envoyer": {
+      "main": [
+        [
+          {
+            "node": "E-mail ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E-mail ?": {
+      "main": [
+        [
+          {
+            "node": "Envoi e-mail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram ?": {
+      "main": [
+        [
+          {
+            "node": "Envoi Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rien à envoyer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "saveManualExecutions": true,
+    "callerPolicy": "any"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {},
+  "tags": []
+}

@@ -1,0 +1,724 @@
+{
+  "id": "p04ApiTickets001",
+  "name": "P04 · 02 Canal webhook (API tickets)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## API des tickets (canal webhook)\nSpécification : `openapi/openapi.yaml` (Swagger UI sur http://localhost:8081). Toutes les routes exigent l'en-tête **`X-API-Key`** (credential *P04 API Key*, valeur `TICKETS_API_KEY` du `.env`).\n\n- `POST /webhook/tickets` : crée un ticket, répond **202** tout de suite puis lance le traitement (classification → RAG → escalade).\n- `GET /webhook/tickets/{id}` : état, classification, réponse suggérée et sources.\n- `POST /webhook/tickets/{id}/resolve` : un humain clôt le ticket ; avec `answer`, la réponse part au client par son canal.\n\n`external_id` rend la création idempotente (même valeur = même ticket).",
+        "height": 420,
+        "width": 500
+      },
+      "id": "f5e8fc76-108b-51d1-8453-a84414646f0d",
+      "name": "Mode d'emploi",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tickets",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e85d00f8-bff2-5dad-9d41-107552ab42f1",
+      "name": "POST /tickets",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "p04CredApiKey001",
+          "name": "P04 API Key"
+        }
+      },
+      "webhookId": "55a2b210-7213-5f57-860b-25953b33d72d"
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $json.body || {};\nconst errors = [];\nconst str = (v, max) => (v === undefined || v === null) ? null : String(v).trim().slice(0, max) || null;\nconst message = str(b.message, 10000);\nif (!message || message.length < 5) errors.push('message : obligatoire (5 caractères minimum)');\nconst customer = (b.customer && typeof b.customer === 'object') ? b.customer : {};\nconst email = str(customer.email, 200);\nif (email && !/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email)) errors.push('customer.email : adresse invalide');\nreturn [{ json: {\n  valid: errors.length === 0, errors,\n  message, subject: str(b.subject, 200), customer_name: str(customer.name, 120), customer_email: email,\n  external_id: str(b.external_id, 200),\n} }];"
+      },
+      "id": "e92e8bb9-4cb8-5c62-ac15-83bad7921f29",
+      "name": "Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "50c8edfb-f71d-406f-b176-c2500a316688",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "e23556a3-f781-55e8-afc0-70b5c20e2368",
+      "name": "Valide ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'validation', details: $json.errors }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "5b46c701-bfca-5f94-b2b6-26d7f57fdcdd",
+      "name": "Réponse 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO tickets (channel, external_id, customer_name, customer_contact, subject, body)\nVALUES ('webhook', $1, $2, $3, $4, $5)\nON CONFLICT (channel, external_id) DO UPDATE SET updated_at = now()\nRETURNING id AS ticket_id, status, received_at, (xmax <> 0) AS duplicate;",
+        "options": {
+          "queryReplacement": "={{ [ $json.external_id, $json.customer_name, $json.customer_email, $json.subject, $json.message ] }}"
+        }
+      },
+      "id": "edd81cb5-4d80-5d70-82ca-ee68ef6ea64c",
+      "name": "Enregistrer ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        -60
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ticket_id: Number($json.ticket_id), status: $json.status, received_at: $json.received_at, duplicate: $json.duplicate, links: { self: $env.PUBLIC_API_URL + '/tickets/' + $json.ticket_id } }) }}",
+        "options": {
+          "responseCode": "={{ $json.duplicate ? 200 : 202 }}"
+        }
+      },
+      "id": "23787bce-5326-5016-a598-a08421d7139d",
+      "name": "Réponse 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b3237831-379b-4b8d-b6bd-c3dea122e134",
+              "leftValue": "={{ !$json.duplicate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "be60eb48-e1de-5da6-ae92-f5d7d5c1a220",
+      "name": "Nouveau ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        -60
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "p04Orchestrat001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "59b88309-b04f-59b4-ba4f-f4dad029ed72",
+      "name": "Traiter le ticket",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "tickets/:id",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "244bce52-0532-586b-83a2-b51659a1b066",
+      "name": "GET /tickets/:id",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        420
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "p04CredApiKey001",
+          "name": "P04 API Key"
+        }
+      },
+      "webhookId": "fb3cb6b7-a344-5c62-ae56-ddb49f9a5f61"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS ticket_id, channel, status, subject, body AS message, customer_name, customer_contact,\n       category, priority, confidence::float AS confidence, wants_human, summary, suggested_answer, sources,\n       answerable, final_answer, answered_by, escalated, escalation_reasons, resolved_by, resolution_note,\n       received_at, classified_at, answered_at, escalated_at, resolved_at\nFROM tickets WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [ parseInt($json.params.id, 10) || 0 ] }}"
+        }
+      },
+      "id": "a8280794-c2ac-582f-acfa-cba35853fee3",
+      "name": "Lire ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        420
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0d6e9ee1-437b-4bba-a286-1122a9683f5a",
+              "leftValue": "={{ !!$json.ticket_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "185e1939-3c20-5575-80f4-09afb2776277",
+      "name": "Trouvé ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ...$json, ticket_id: Number($json.ticket_id) }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "002aadd4-168e-54cf-955a-d4b62e9f9ee1",
+      "name": "Réponse 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'not_found', message: 'Ticket introuvable' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "07419040-0339-54b8-a07f-63ed9249beee",
+      "name": "Réponse 404",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tickets/:id/resolve",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b33031c7-c699-52b2-93de-b8a286a36e96",
+      "name": "POST /tickets/:id/resolve",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        760
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "p04CredApiKey001",
+          "name": "P04 API Key"
+        }
+      },
+      "webhookId": "b4d9c4fe-f5d5-5a19-ad6e-b7d878dac564"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE tickets\nSET status = 'resolu', resolved_at = now(), resolved_by = 'humain', resolution_note = $3,\n    final_answer = COALESCE($2, final_answer),\n    answered_by  = CASE WHEN $2 IS NOT NULL THEN 'humain' ELSE answered_by END,\n    answered_at  = CASE WHEN $2 IS NOT NULL THEN COALESCE(answered_at, now()) ELSE answered_at END\nWHERE id = $1 AND status <> 'resolu'\nRETURNING id AS ticket_id, channel, customer_name, customer_contact, subject, status, resolved_at,\n          final_answer, ($2 IS NOT NULL) AS send_answer;",
+        "options": {
+          "queryReplacement": "={{ [ parseInt($json.params.id, 10) || 0, ($json.body?.answer || '').trim() || null, [ $json.body?.agent, $json.body?.note ].filter(Boolean).join(' : ') || null ] }}"
+        }
+      },
+      "id": "5066fbbd-e528-50b7-bae3-728f1f3dd7d2",
+      "name": "Clore le ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        760
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f6a4e337-b0fa-4498-a0a4-02bb68d55c2f",
+              "leftValue": "={{ !!$json.ticket_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "dff236d3-7eb1-52fa-b406-169b640c151f",
+      "name": "Clos ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        760
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ticket_id: Number($json.ticket_id), status: $json.status, resolved_at: $json.resolved_at, answer_sent: $json.send_answer && $json.channel !== 'webhook' }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "ee5a2fbe-aa9f-5507-87f9-913fe933575c",
+      "name": "Réponse 200 · clos",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'not_found', message: 'Ticket introuvable ou déjà résolu' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "7388899a-ffa2-5ad9-9ea5-6fe0a72b99bf",
+      "name": "Réponse 404 · clos",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d318df93-387d-4883-bfed-1e8470557226",
+              "leftValue": "={{ $json.send_answer }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "9c79e770-4c00-550a-bc52-f66c250f5c55",
+      "name": "Réponse à envoyer ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = $json;\nconst hello = t.customer_name ? `Bonjour ${t.customer_name},` : 'Bonjour,';\nreturn { json: {\n  ticket_id: Number(t.ticket_id), channel: t.channel, contact: t.customer_contact, subject: t.subject,\n  text: `${hello}\\n\\n${t.final_answer}\\n\\nVotre demande (ticket n°${t.ticket_id}) est maintenant clôturée.\\nL'équipe support`,\n} };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "e6abba7c-0547-5625-952d-53ca03af8c18",
+      "name": "Message conseiller",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "p04EnvoiRepons01",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "97c3f4e3-8fbe-57df-a366-f51678f10814",
+      "name": "Envoyer au client",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        680
+      ]
+    }
+  ],
+  "connections": {
+    "POST /tickets": {
+      "main": [
+        [
+          {
+            "node": "Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation": {
+      "main": [
+        [
+          {
+            "node": "Valide ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valide ?": {
+      "main": [
+        [
+          {
+            "node": "Enregistrer ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Réponse 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enregistrer ticket": {
+      "main": [
+        [
+          {
+            "node": "Réponse 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Réponse 202": {
+      "main": [
+        [
+          {
+            "node": "Nouveau ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nouveau ?": {
+      "main": [
+        [
+          {
+            "node": "Traiter le ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /tickets/:id": {
+      "main": [
+        [
+          {
+            "node": "Lire ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire ticket": {
+      "main": [
+        [
+          {
+            "node": "Trouvé ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trouvé ?": {
+      "main": [
+        [
+          {
+            "node": "Réponse 200",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Réponse 404",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /tickets/:id/resolve": {
+      "main": [
+        [
+          {
+            "node": "Clore le ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clore le ticket": {
+      "main": [
+        [
+          {
+            "node": "Clos ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clos ?": {
+      "main": [
+        [
+          {
+            "node": "Réponse 200 · clos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Réponse 404 · clos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Réponse 200 · clos": {
+      "main": [
+        [
+          {
+            "node": "Réponse à envoyer ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Réponse à envoyer ?": {
+      "main": [
+        [
+          {
+            "node": "Message conseiller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message conseiller": {
+      "main": [
+        [
+          {
+            "node": "Envoyer au client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "saveManualExecutions": true,
+    "callerPolicy": "any"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {},
+  "tags": []
+}

@@ -1,0 +1,432 @@
+{
+  "id": "p04CanalTelegram",
+  "name": "P04 · 04 Canal Telegram (polling)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Canal Telegram\nInterroge l'API Telegram toutes les 10 s (`getUpdates`) : **aucune URL publique ni tunnel nécessaire**.\n\n1. Crée un bot avec **@BotFather** et copie son jeton dans `.env` → `TELEGRAM_BOT_TOKEN`.\n2. `docker compose up -d n8n` pour recharger la variable.\n3. Écris au bot : chaque message texte devient un ticket ; la réponse revient dans la conversation.\n\nSans jeton, le workflow s'arrête au premier nœud (rien n'est appelé). Le dernier `update_id` traité est gardé dans la table `channel_state`.\nLes exécutions réussies ne sont pas conservées (une toutes les 10 s).",
+        "height": 380,
+        "width": 520
+      },
+      "id": "be056522-f8cb-5b8c-bafc-e19236218e15",
+      "name": "Mode d'emploi",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        -340
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "1585a9d0-d31f-5e92-a526-ed850e3297d5",
+      "name": "Toutes les 10 s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "67f09506-3682-47fa-8768-a298837f1ea7",
+              "leftValue": "={{ !!$env.TELEGRAM_BOT_TOKEN }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "469680ba-40bc-5ecc-be61-929f1b3e0c22",
+      "name": "Jeton configuré ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE((SELECT value::bigint FROM channel_state WHERE key = 'telegram_offset'), 0) AS next_offset;",
+        "options": {}
+      },
+      "id": "7d80286d-5ef5-5c47-a747-b9d56f7968c1",
+      "name": "Dernier update_id",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        -20
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getUpdates?timeout=0&offset={{ $json.next_offset }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "1d3958f7-4158-5ef4-8d15-3df3e14dd6d3",
+      "name": "getUpdates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const updates = $json.result || [];\nif (!updates.length) return [];\nconst next_offset = Math.max(...updates.map(u => u.update_id)) + 1;\nreturn updates.map(u => {\n  const m = u.message || {};\n  const text = (m.text || '').trim();\n  const kind = !text ? 'ignore' : (/^\\/(start|aide|help)\\b/.test(text) ? 'start' : 'ticket');\n  const name = [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' ') || m.from?.username || null;\n  return { json: { kind, next_offset, update_id: String(u.update_id), chat_id: String(m.chat?.id || ''), name, text } };\n}).filter(i => i.json.chat_id);"
+      },
+      "id": "1e2886f8-6988-5fc1-8be6-b1fc921c5ba1",
+      "name": "Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO channel_state (key, value) VALUES ('telegram_offset', $1)\nON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();",
+        "options": {
+          "queryReplacement": "={{ [ String($json.next_offset) ] }}"
+        }
+      },
+      "id": "55d22491-d001-5eca-91c4-2c93ffe8d0e9",
+      "name": "Sauver offset",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1100,
+        -200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "02c2b84b-c140-47c1-8df4-a054835aaf6a",
+              "leftValue": "={{ $json.kind === 'ticket' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "4ed73d86-7409-5819-a0ff-c407717b0cb4",
+      "name": "Ticket ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO tickets (channel, external_id, customer_name, customer_contact, subject, body)\nVALUES ('telegram', $1, $2, $3, $4, $5)\nON CONFLICT (channel, external_id) DO NOTHING\nRETURNING id AS ticket_id, customer_contact;",
+        "options": {
+          "queryReplacement": "={{ [ $json.update_id, $json.name, $json.chat_id, $json.text.split('\\n')[0].slice(0, 80), $json.text ] }}"
+        }
+      },
+      "id": "44cbf56c-553c-5d47-9a51-779b5f28de71",
+      "name": "Enregistrer ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1320,
+        -60
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $json.customer_contact, text: `Ticket n°${$json.ticket_id} reçu ✅ Analyse en cours, réponse dans un instant…` }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "0ac83e29-9fc0-56a9-8628-b522da08e162",
+      "name": "Accusé de réception",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "p04Orchestrat001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "eb79ff93-5798-5627-8200-30fd5ccf75fa",
+      "name": "Traiter le ticket",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "59b4e889-d3ea-4c27-ae21-0c19e4ffbdaa",
+              "leftValue": "={{ $json.kind === 'start' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "25d452ef-0d07-578d-83d9-0d1b9202c8d2",
+      "name": "Commande /start ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $json.chat_id, text: 'Bonjour 👋 Je suis l\\'assistant du support Odoo. Décrivez votre problème en un message (application, action, message d\\'erreur) : je vous réponds à partir de notre base de connaissances, ou je transmets à un conseiller.' }) }}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "51f5a36e-3d95-5fd1-b3a9-dc1b85825d1e",
+      "name": "Message d'accueil",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Toutes les 10 s": {
+      "main": [
+        [
+          {
+            "node": "Jeton configuré ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jeton configuré ?": {
+      "main": [
+        [
+          {
+            "node": "Dernier update_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dernier update_id": {
+      "main": [
+        [
+          {
+            "node": "getUpdates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "getUpdates": {
+      "main": [
+        [
+          {
+            "node": "Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Messages": {
+      "main": [
+        [
+          {
+            "node": "Sauver offset",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Ticket ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ticket ?": {
+      "main": [
+        [
+          {
+            "node": "Enregistrer ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Commande /start ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enregistrer ticket": {
+      "main": [
+        [
+          {
+            "node": "Accusé de réception",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Traiter le ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commande /start ?": {
+      "main": [
+        [
+          {
+            "node": "Message d'accueil",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "saveManualExecutions": true,
+    "callerPolicy": "any",
+    "saveDataSuccessExecution": "none"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {},
+  "tags": []
+}

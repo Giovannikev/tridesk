@@ -1,0 +1,367 @@
+{
+  "id": "p04Ingestion0001",
+  "name": "P04 · 01 Ingestion base de connaissances",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Ingestion de la base de connaissances\nLit les fiches Markdown de `knowledge-base/` (montées dans `/data/kb`), les découpe par section `##`, calcule les embeddings avec **Ollama** (`EMBED_MODEL`, bge-m3 par défaut) puis **remplace** tout l'index `kb_chunks` (pgvector).\n\n- **Test manuel** : réindexe tout de suite.\n- **Webhook · reindex** : `POST /webhook/kb/reindex` (en-tête `X-API-Key`). Corps `{\"only_if_empty\": true}` = n'indexe que si la table est vide (utilisé au premier démarrage).\n\nAprès une modification d'une fiche : relance ce workflow.",
+        "height": 380,
+        "width": 480
+      },
+      "id": "9c3c76b1-5d7d-5276-aae9-9481f835cd97",
+      "name": "Mode d'emploi",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -260
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "cb87e8f4-f2ab-5c06-bf83-f3cc351b355c",
+      "name": "Test manuel",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kb/reindex",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "5b461c2b-7ea9-529e-afdc-a9e02f1ac07b",
+      "name": "Webhook · reindex",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "p04CredApiKey001",
+          "name": "P04 API Key"
+        }
+      },
+      "webhookId": "341e8441-2ec1-5c86-8c54-2c00866e553b"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || {};\nreturn [{ json: { only_if_empty: body.only_if_empty === true } }];"
+      },
+      "id": "4bd2a852-d5eb-5785-9867-7e355221f414",
+      "name": "Options",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT count(*)::int AS n FROM kb_chunks;",
+        "options": {}
+      },
+      "id": "0cc9576d-2e1c-5d38-82e3-380ae23e0360",
+      "name": "Chunks existants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5c5767d4-7100-4adf-b230-819c0235c901",
+              "leftValue": "={{ !$('Options').first().json.only_if_empty || $json.n === 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "53231e05-c1ec-5d53-bce9-ba2e20d3379a",
+      "name": "Indexer ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { status: 'skipped', reason: 'base déjà indexée', chunks: $('Chunks existants').first().json.n } }];"
+      },
+      "id": "aae943df-861e-5aff-8e7b-e2ab9aa338a6",
+      "name": "Déjà indexée",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "/data/kb/*.md",
+        "options": {}
+      },
+      "id": "3147f9fe-1a52-548a-aba1-c009c9aba530",
+      "name": "Lire les fiches .md",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        880,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "text",
+        "options": {
+          "keepSource": "both"
+        }
+      },
+      "id": "08371f16-8d32-548e-aa50-a93b288b86f2",
+      "name": "Texte",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Découpe chaque fiche par section « ## » ; les sections longues sont coupées par paragraphes.\nconst MAX = 1200;\nconst chunks = [];\nfor (const item of $input.all()) {\n  const fileName = item.binary?.data?.fileName || item.json.fileName || 'inconnu.md';\n  const text = (item.json.text || '').replace(/\\r/g, '');\n  const title = (text.match(/^#\\s+(.+)$/m) || [null, fileName])[1].trim();\n  const parts = text.split(/^##\\s+/m).slice(1);\n  let idx = 0;\n  for (const part of parts) {\n    const [head, ...rest] = part.split('\\n');\n    const section = head.trim();\n    const body = rest.join('\\n').trim();\n    const paras = body.split(/\\n\\s*\\n/);\n    let buf = '';\n    const flush = () => {\n      if (!buf.trim()) return;\n      chunks.push({ doc_path: fileName, doc_title: title, section, chunk_index: idx++,\n                    content: `${title} — ${section}\\n${buf.trim()}` });\n      buf = '';\n    };\n    for (const p of paras) {\n      if ((buf + '\\n\\n' + p).length > MAX) flush();\n      buf += (buf ? '\\n\\n' : '') + p;\n    }\n    flush();\n  }\n}\nif (!chunks.length) throw new Error('Aucune section « ## » trouvée dans /data/kb/*.md');\nreturn [{ json: { chunks, inputs: chunks.map(c => c.content) } }];"
+      },
+      "id": "59324ac3-454f-55f4-808c-22b1308b8e3e",
+      "name": "Découpage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/embed",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.EMBED_MODEL, input: $json.inputs }) }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "id": "48c6e097-ba49-5f7e-aa67-3c60890010d7",
+      "name": "Ollama · embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { chunks } = $('Découpage').first().json;\nconst embeddings = $json.embeddings || [];\nif (embeddings.length !== chunks.length) throw new Error(`Embeddings reçus : ${embeddings.length} / ${chunks.length}`);\nconst rows = chunks.map((c, i) => ({ ...c, embedding: JSON.stringify(embeddings[i]), model: $json.model }));\nreturn [{ json: { rows: JSON.stringify(rows), count: rows.length } }];"
+      },
+      "id": "a4e6336e-c81a-5c04-82c5-de93657c7b16",
+      "name": "Lignes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH purge AS (DELETE FROM kb_chunks RETURNING 1),\n     ins AS (\n       INSERT INTO kb_chunks (doc_path, doc_title, section, chunk_index, content, embedding, model)\n       SELECT r.doc_path, r.doc_title, r.section, r.chunk_index, r.content, r.embedding::vector, r.model\n       FROM jsonb_to_recordset($1::jsonb) AS r(doc_path text, doc_title text, section text,\n                                               chunk_index int, content text, embedding text, model text)\n       RETURNING doc_path)\nSELECT 'ok' AS status, count(*)::int AS chunks, count(DISTINCT doc_path)::int AS documents,\n       (SELECT count(*) FROM purge)::int AS anciens_chunks_supprimes\nFROM ins;",
+        "options": {
+          "queryReplacement": "={{ [ $json.rows ] }}"
+        }
+      },
+      "id": "0f942337-32fc-5229-82c6-b7d3a880a718",
+      "name": "Remplacer l'index",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1980,
+        40
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Test manuel": {
+      "main": [
+        [
+          {
+            "node": "Options",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook · reindex": {
+      "main": [
+        [
+          {
+            "node": "Options",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Options": {
+      "main": [
+        [
+          {
+            "node": "Chunks existants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunks existants": {
+      "main": [
+        [
+          {
+            "node": "Indexer ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Indexer ?": {
+      "main": [
+        [
+          {
+            "node": "Lire les fiches .md",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Déjà indexée",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire les fiches .md": {
+      "main": [
+        [
+          {
+            "node": "Texte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Texte": {
+      "main": [
+        [
+          {
+            "node": "Découpage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Découpage": {
+      "main": [
+        [
+          {
+            "node": "Ollama · embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama · embeddings": {
+      "main": [
+        [
+          {
+            "node": "Lignes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lignes": {
+      "main": [
+        [
+          {
+            "node": "Remplacer l'index",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "saveManualExecutions": true,
+    "callerPolicy": "any"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {},
+  "tags": []
+}

@@ -1,0 +1,337 @@
+{
+  "id": "p04ReponseRag001",
+  "name": "P04 · 21 Réponse suggérée (RAG)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Réponse suggérée avec sources (RAG)\n1. **Embedding** de la question (`EMBED_MODEL`).\n2. **Recherche pgvector** : fonction SQL `match_kb()` (distance cosinus `<=>`), 4 extraits.\n3. On garde les extraits dont la similarité ≥ `SIMILARITY_MIN` (.env).\n4. Le LLM rédige la réponse **uniquement** à partir de ces extraits numérotés et renvoie les numéros cités (`sources_used`) et `answerable`.\n\nSans extrait assez proche : pas d'appel au LLM, `answerable = false` → le ticket sera escaladé.",
+        "height": 320,
+        "width": 480
+      },
+      "id": "55a9119c-efa4-5dba-946f-056026cdbb0d",
+      "name": "Mode d'emploi",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "55492a91-2380-567d-8bab-e4c7375cf097",
+      "name": "Ticket à traiter",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, customer_name, subject, body, category FROM tickets WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [ $json.ticket_id ] }}"
+        }
+      },
+      "id": "dd527bec-d348-5f38-ba50-3a8a7d181a89",
+      "name": "Lire ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/embed",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $env.EMBED_MODEL, input: `${$json.subject || ''}\\n${$json.body}` }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "617ee6c5-e96e-5dd7-b70f-788e7d90f87c",
+      "name": "Ollama · embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM match_kb('{{ JSON.stringify($json.embeddings?.[0] ?? []) }}'::vector, 4);",
+        "options": {}
+      },
+      "id": "6d206f84-fae4-5b25-808e-2e0c215a0db7",
+      "name": "Recherche pgvector",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = $('Lire ticket').first().json;\nconst MIN = Number($env.SIMILARITY_MIN || 0.5);\nconst errors = [];\nconst emb = $('Ollama · embedding').first().json;\nif (emb.error) errors.push('embedding : ' + (emb.error.message || JSON.stringify(emb.error)));\nconst rows = $input.all().map(i => i.json).filter(r => r.content);\nif (!rows.length && $input.first().json.error) errors.push('recherche : ' + JSON.stringify($input.first().json.error));\nconst kept = rows.filter(r => Number(r.similarity) >= MIN);\nconst sources = kept.map((r, i) => ({ n: i + 1, title: r.doc_title, section: r.section, path: r.doc_path,\n                                      similarity: Number(r.similarity) }));\nconst context = kept.map((r, i) => `[${i + 1}] ${r.content}`).join('\\n\\n');\nconst system = [\n  \"Tu es l'assistant du support d'un intégrateur Odoo. Tu rédiges une réponse au client en français, claire et concise (150 mots maximum, étapes numérotées si utile).\",\n  \"Tu t'appuies UNIQUEMENT sur les SOURCES fournies ; n'invente jamais de menu, de bouton ou de procédure.\",\n  \"Cite les sources utilisées dans le texte avec leur numéro entre crochets, par exemple [1].\",\n  \"sources_used = liste des numéros de sources réellement utilisées.\",\n  \"Si les sources ne permettent pas de répondre à la demande, mets answerable = false et écris dans answer une phrase indiquant que la demande est transmise à un conseiller.\",\n  \"Ne mets pas de formule de politesse finale ni de signature.\",\n].join('\\n');\nconst user = `DEMANDE DU CLIENT\\nSujet : ${t.subject || '(aucun)'}\\n${t.body}\\n\\nSOURCES\\n${context}`;\nreturn [{ json: {\n  ticket_id: Number(t.id), sources, has_sources: kept.length > 0,\n  best_similarity: rows.length ? Math.max(...rows.map(r => Number(r.similarity))) : null,\n  error: errors.join(' | ') || null,\n  request: {\n    stream: false, options: { temperature: 0.2, num_ctx: 8192 },\n    format: { type: 'object', properties: {\n      answer: { type: 'string' }, sources_used: { type: 'array', items: { type: 'integer' } }, answerable: { type: 'boolean' },\n    }, required: ['answer', 'sources_used', 'answerable'] },\n    messages: [{ role: 'system', content: system }, { role: 'user', content: user }],\n  },\n} }];"
+      },
+      "id": "c085a94a-3ecc-5b1e-a318-05b8fc6bd827",
+      "name": "Prompt RAG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1e5c0c2d-f331-4a57-8240-376c02f4adc4",
+              "leftValue": "={{ $json.has_sources }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "a7ac9932-f75d-5a4d-b7a1-e70880a88aa3",
+      "name": "Sources trouvées ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ...$json.request, model: $env.CHAT_MODEL }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "23644c17-598d-57d4-88b0-8ee79adbbf6b",
+      "name": "Ollama · réponse",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $('Prompt RAG').first().json;\nlet r = {}, error = p.error;\ntry {\n  if ($json.error) throw new Error(typeof $json.error === 'string' ? $json.error : JSON.stringify($json.error));\n  r = JSON.parse($json.message?.content || '');\n} catch (e) { error = [error, 'réponse : ' + e.message].filter(Boolean).join(' | '); }\nconst answer = String(r.answer || '').trim();\nconst used = [...new Set((r.sources_used || []).map(Number))];\n// Sources réellement citées (numéros valides, ou [n] présents dans le texte)\nlet cited = p.sources.filter(s => used.includes(s.n) || answer.includes(`[${s.n}]`));\nif (!cited.length && r.answerable) cited = p.sources.slice(0, 1);\nreturn [{ json: { ticket_id: p.ticket_id, answer: answer || null, answerable: r.answerable === true && !!answer,\n                  sources: cited, error } }];"
+      },
+      "id": "b314b665-9644-5c2a-ba43-7f10a6aeae36",
+      "name": "Mise en forme",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $json;\nreturn [{ json: { ticket_id: p.ticket_id, answer: null, answerable: false, sources: [],\n                  error: p.error || null, best_similarity: p.best_similarity } }];"
+      },
+      "id": "d4211dcc-7c3d-5043-99dd-50f23746031a",
+      "name": "Aucune source",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE tickets\nSET suggested_answer = $2, sources = $3::jsonb, answerable = $4,\n    processing_error = NULLIF(concat_ws(' | ', processing_error, $5), '')\nWHERE id = $1\nRETURNING id AS ticket_id, answerable, jsonb_array_length(sources) AS nb_sources;",
+        "options": {
+          "queryReplacement": "={{ [ $json.ticket_id, $json.answer, JSON.stringify($json.sources), $json.answerable, $json.error ] }}"
+        }
+      },
+      "id": "0f57c841-039f-5cf4-bda3-ee8a044347a8",
+      "name": "Enregistrer réponse",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1760,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Ticket à traiter": {
+      "main": [
+        [
+          {
+            "node": "Lire ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lire ticket": {
+      "main": [
+        [
+          {
+            "node": "Ollama · embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama · embedding": {
+      "main": [
+        [
+          {
+            "node": "Recherche pgvector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recherche pgvector": {
+      "main": [
+        [
+          {
+            "node": "Prompt RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt RAG": {
+      "main": [
+        [
+          {
+            "node": "Sources trouvées ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sources trouvées ?": {
+      "main": [
+        [
+          {
+            "node": "Ollama · réponse",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Aucune source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama · réponse": {
+      "main": [
+        [
+          {
+            "node": "Mise en forme",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mise en forme": {
+      "main": [
+        [
+          {
+            "node": "Enregistrer réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aucune source": {
+      "main": [
+        [
+          {
+            "node": "Enregistrer réponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "saveManualExecutions": true,
+    "callerPolicy": "any"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {},
+  "tags": []
+}

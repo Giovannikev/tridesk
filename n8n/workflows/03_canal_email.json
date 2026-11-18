@@ -1,0 +1,153 @@
+{
+  "id": "p04CanalEmail001",
+  "name": "P04 · 03 Canal e-mail (IMAP)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Canal e-mail\nRelève la boîte **support@support.local** (GreenMail, dans la stack) en IMAP et crée un ticket par e-mail non lu.\n\nTester : `./scripts/envoyer_email_test.sh` envoie un e-mail sur le port SMTP 3025 de GreenMail.\n\n**En production** : remplace le credential *P04 IMAP GreenMail* par ta vraie boîte (Gmail : mot de passe d'application, `imap.gmail.com:993`, SSL) et le credential *P04 SMTP Mailpit* par ton SMTP.",
+        "height": 340,
+        "width": 480
+      },
+      "id": "07416861-ed87-5822-a6e8-4b4c5123cd0e",
+      "name": "Mode d'emploi",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        -300
+      ]
+    },
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "format": "resolved",
+        "options": {}
+      },
+      "id": "b32c5018-c4d8-5afc-b89f-55ef113ef81d",
+      "name": "IMAP · support@support.local",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "imap": {
+          "id": "p04CredImapGreen",
+          "name": "P04 IMAP GreenMail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const out = [];\nconst support = ($env.SUPPORT_FROM_EMAIL || '').toLowerCase();\nfor (const { json: m } of $input.all()) {\n  const from = m.from?.value?.[0] || {};\n  let address = from.address || '';\n  if (!address && typeof m.from === 'string') address = (m.from.match(/<([^>]+)>/) || [null, m.from])[1];\n  address = (address || '').trim().toLowerCase();\n  if (!address || address === support) continue;                // évite les boucles\n  const headers = m.headers || {};\n  if (/auto-(replied|generated)/i.test(JSON.stringify(headers['auto-submitted'] || ''))) continue;\n  let text = m.text || m.textPlain || String(m.html || m.textHtml || '').replace(/<[^>]+>/g, ' ');\n  text = text.replace(/\\r/g, '')\n             .split(/\\n-- \\n|\\n>|\\nLe .{5,80} a écrit ?:|\\nOn .{5,80} wrote:/)[0].trim();  // retire l'historique cité\n  if (!text) continue;\n  out.push({ json: {\n    external_id: m.messageId || m.metadata?.['message-id'] || `${address}|${m.date}|${m.subject}`,\n    customer_name: from.name || null, customer_email: address,\n    subject: (m.subject || '(sans objet)').slice(0, 200), message: text.slice(0, 10000),\n  } });\n}\nreturn out;"
+      },
+      "id": "c7532262-f2f5-5f52-8571-7a6c13a4a6c0",
+      "name": "Normaliser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO tickets (channel, external_id, customer_name, customer_contact, subject, body)\nVALUES ('email', $1, $2, $3, $4, $5)\nON CONFLICT (channel, external_id) DO NOTHING\nRETURNING id AS ticket_id;",
+        "options": {
+          "queryReplacement": "={{ [ $json.external_id, $json.customer_name, $json.customer_email, $json.subject, $json.message ] }}"
+        }
+      },
+      "id": "3a917dfb-3348-5f16-81de-b9d9661dbd4b",
+      "name": "Enregistrer ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "p04CredPostgres1",
+          "name": "P04 Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "p04Orchestrat001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "a4ad2658-1ef6-528c-a477-e3a5ce2e35dc",
+      "name": "Traiter le ticket",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "IMAP · support@support.local": {
+      "main": [
+        [
+          {
+            "node": "Normaliser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normaliser": {
+      "main": [
+        [
+          {
+            "node": "Enregistrer ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enregistrer ticket": {
+      "main": [
+        [
+          {
+            "node": "Traiter le ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Paris",
+    "saveManualExecutions": true,
+    "callerPolicy": "any"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {},
+  "tags": []
+}
