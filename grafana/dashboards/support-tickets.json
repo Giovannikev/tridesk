@@ -897,7 +897,7 @@
       "id": 13,
       "type": "table",
       "title": "Escaladés en attente d'un humain",
-      "description": "À traiter : clore avec POST /webhook/tickets/{id}/resolve.",
+      "description": "À traiter : clore avec POST /webhook/tickets/resolve.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "p04-pg"

@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## API des tickets (canal webhook)\nSpécification : `openapi/openapi.yaml` (Swagger UI sur http://localhost:8081). Toutes les routes exigent l'en-tête **`X-API-Key`** (credential *P04 API Key*, valeur `TICKETS_API_KEY` du `.env`).\n\n- `POST /webhook/tickets` : crée un ticket, répond **202** tout de suite puis lance le traitement (classification → RAG → escalade).\n- `GET /webhook/tickets/{id}` : état, classification, réponse suggérée et sources.\n- `POST /webhook/tickets/{id}/resolve` : un humain clôt le ticket ; avec `answer`, la réponse part au client par son canal.\n\n`external_id` rend la création idempotente (même valeur = même ticket).",
+        "content": "## API des tickets (canal webhook)\nSpécification : `openapi/openapi.yaml` (Swagger UI sur http://localhost:8081). Toutes les routes exigent l'en-tête **`X-API-Key`** (credential *P04 API Key*, valeur `TICKETS_API_KEY` du `.env`).\n\n- `POST /webhook/tickets` : crée un ticket, répond **202** tout de suite puis lance le traitement (classification → RAG → escalade).\n- `GET /webhook/tickets?id=12` : état, classification, réponse suggérée et sources.\n- `POST /webhook/tickets/resolve` (`{\"ticket_id\": 12, \"answer\": \"…\"}`) : un humain clôt le ticket ; avec `answer`, la réponse part au client par son canal.\n\n`external_id` rend la création idempotente (même valeur = même ticket).",
         "height": 420,
         "width": 500
       },
@@ -65,7 +65,7 @@
           },
           "conditions": [
             {
-              "id": "50c8edfb-f71d-406f-b176-c2500a316688",
+              "id": "108e8244-b3fb-48be-b36d-fd9ecfd13f9f",
               "leftValue": "={{ $json.valid }}",
               "rightValue": "",
               "operator": {
@@ -132,7 +132,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ ticket_id: Number($json.ticket_id), status: $json.status, received_at: $json.received_at, duplicate: $json.duplicate, links: { self: $env.PUBLIC_API_URL + '/tickets/' + $json.ticket_id } }) }}",
+        "responseBody": "={{ JSON.stringify({ ticket_id: Number($json.ticket_id), status: $json.status, received_at: $json.received_at, duplicate: $json.duplicate, links: { self: $env.PUBLIC_API_URL + '/tickets?id=' + $json.ticket_id } }) }}",
         "options": {
           "responseCode": "={{ $json.duplicate ? 200 : 202 }}"
         }
@@ -157,7 +157,7 @@
           },
           "conditions": [
             {
-              "id": "b3237831-379b-4b8d-b6bd-c3dea122e134",
+              "id": "9ac9dca1-5ef4-4609-86b2-992cf0d82166",
               "leftValue": "={{ !$json.duplicate }}",
               "rightValue": "",
               "operator": {
@@ -213,13 +213,13 @@
     {
       "parameters": {
         "httpMethod": "GET",
-        "path": "tickets/:id",
+        "path": "tickets",
         "authentication": "headerAuth",
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "244bce52-0532-586b-83a2-b51659a1b066",
-      "name": "GET /tickets/:id",
+      "id": "550637d0-2eb6-578a-8891-66760feeaad4",
+      "name": "GET /tickets?id=",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
@@ -232,14 +232,14 @@
           "name": "P04 API Key"
         }
       },
-      "webhookId": "fb3cb6b7-a344-5c62-ae56-ddb49f9a5f61"
+      "webhookId": "42f07e1f-c015-5a5e-ac4f-9d02676d4eae"
     },
     {
       "parameters": {
         "operation": "executeQuery",
         "query": "SELECT id AS ticket_id, channel, status, subject, body AS message, customer_name, customer_contact,\n       category, priority, confidence::float AS confidence, wants_human, summary, suggested_answer, sources,\n       answerable, final_answer, answered_by, escalated, escalation_reasons, resolved_by, resolution_note,\n       received_at, classified_at, answered_at, escalated_at, resolved_at\nFROM tickets WHERE id = $1;",
         "options": {
-          "queryReplacement": "={{ [ parseInt($json.params.id, 10) || 0 ] }}"
+          "queryReplacement": "={{ [ parseInt($json.query?.id, 10) || 0 ] }}"
         }
       },
       "id": "a8280794-c2ac-582f-acfa-cba35853fee3",
@@ -269,7 +269,7 @@
           },
           "conditions": [
             {
-              "id": "0d6e9ee1-437b-4bba-a286-1122a9683f5a",
+              "id": "5447c761-e39a-46f3-805d-28344fe5e98a",
               "leftValue": "={{ !!$json.ticket_id }}",
               "rightValue": "",
               "operator": {
@@ -330,13 +330,13 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "tickets/:id/resolve",
+        "path": "tickets/resolve",
         "authentication": "headerAuth",
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "b33031c7-c699-52b2-93de-b8a286a36e96",
-      "name": "POST /tickets/:id/resolve",
+      "id": "eb8c7e34-42fa-56b8-aa21-f9823bcbaabf",
+      "name": "POST /tickets/resolve",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
@@ -349,14 +349,14 @@
           "name": "P04 API Key"
         }
       },
-      "webhookId": "b4d9c4fe-f5d5-5a19-ad6e-b7d878dac564"
+      "webhookId": "37b314be-0e51-54e0-96d7-3166301791df"
     },
     {
       "parameters": {
         "operation": "executeQuery",
         "query": "UPDATE tickets\nSET status = 'resolu', resolved_at = now(), resolved_by = 'humain', resolution_note = $3,\n    final_answer = COALESCE($2, final_answer),\n    answered_by  = CASE WHEN $2 IS NOT NULL THEN 'humain' ELSE answered_by END,\n    answered_at  = CASE WHEN $2 IS NOT NULL THEN COALESCE(answered_at, now()) ELSE answered_at END\nWHERE id = $1 AND status <> 'resolu'\nRETURNING id AS ticket_id, channel, customer_name, customer_contact, subject, status, resolved_at,\n          final_answer, ($2 IS NOT NULL) AS send_answer;",
         "options": {
-          "queryReplacement": "={{ [ parseInt($json.params.id, 10) || 0, ($json.body?.answer || '').trim() || null, [ $json.body?.agent, $json.body?.note ].filter(Boolean).join(' : ') || null ] }}"
+          "queryReplacement": "={{ [ parseInt($json.body?.ticket_id, 10) || 0, ($json.body?.answer || '').trim() || null, [ $json.body?.agent, $json.body?.note ].filter(Boolean).join(' : ') || null ] }}"
         }
       },
       "id": "5066fbbd-e528-50b7-bae3-728f1f3dd7d2",
@@ -386,7 +386,7 @@
           },
           "conditions": [
             {
-              "id": "f6a4e337-b0fa-4498-a0a4-02bb68d55c2f",
+              "id": "6bc383cd-8b0f-43f3-9024-8f2a62d707af",
               "leftValue": "={{ !!$json.ticket_id }}",
               "rightValue": "",
               "operator": {
@@ -455,7 +455,7 @@
           },
           "conditions": [
             {
-              "id": "d318df93-387d-4883-bfed-1e8470557226",
+              "id": "bada69f5-7c52-41ce-a46e-2de809d95acf",
               "leftValue": "={{ $json.send_answer }}",
               "rightValue": "",
               "operator": {
@@ -597,7 +597,7 @@
         ]
       ]
     },
-    "GET /tickets/:id": {
+    "GET /tickets?id=": {
       "main": [
         [
           {
@@ -637,7 +637,7 @@
         ]
       ]
     },
-    "POST /tickets/:id/resolve": {
+    "POST /tickets/resolve": {
       "main": [
         [
           {

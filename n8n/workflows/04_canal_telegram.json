@@ -48,7 +48,7 @@
           },
           "conditions": [
             {
-              "id": "67f09506-3682-47fa-8768-a298837f1ea7",
+              "id": "92592bd6-b35b-4c3a-9289-6061eea93bb8",
               "leftValue": "={{ !!$env.TELEGRAM_BOT_TOKEN }}",
               "rightValue": "",
               "operator": {
@@ -157,7 +157,7 @@
           },
           "conditions": [
             {
-              "id": "02c2b84b-c140-47c1-8df4-a054835aaf6a",
+              "id": "4b7a85bb-f53c-4f51-b731-2f0f8608c253",
               "leftValue": "={{ $json.kind === 'ticket' }}",
               "rightValue": "",
               "operator": {
@@ -265,7 +265,7 @@
           },
           "conditions": [
             {
-              "id": "59b4e889-d3ea-4c27-ae21-0c19e4ffbdaa",
+              "id": "f6f9152f-7ec6-4ff7-9098-0ce1d649a04e",
               "leftValue": "={{ $json.kind === 'start' }}",
               "rightValue": "",
               "operator": {

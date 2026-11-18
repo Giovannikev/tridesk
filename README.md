@@ -17,7 +17,7 @@ Tout tourne en local avec Docker : il ne faut aucune clé payante, car le LLM es
  Telegram       ─┘        │
                           ▼
             10 Traitement d'un ticket (orchestrateur)
-              ├─ 20 Classification ── Ollama qwen2.5:3b, sortie JSON structurée
+              ├─ 20 Classification ── Ollama qwen2.5:1.5b, sortie JSON structurée
               ├─ 21 Réponse RAG ───── embedding bge-m3 → pgvector (match_kb) → réponse + sources
               └─ 22 Escalade ou réponse automatique
                      ├─ escalade : e-mail à l'agent (Mailpit) + Telegram + accusé au client
@@ -30,7 +30,7 @@ Tout tourne en local avec Docker : il ne faut aucune clé payante, car le LLM es
 |---|---|---|
 | n8n 2.44.7 | workflows, webhooks | http://localhost:5679 |
 | PostgreSQL 17 + pgvector | tickets, `kb_chunks`, vues | `localhost:5433` |
-| Ollama | `qwen2.5:3b` (chat), `bge-m3` (embeddings) | interne |
+| Ollama | `qwen2.5:1.5b` (chat), `bge-m3` (embeddings) | interne |
 | Grafana 13 | tableau de bord provisionné | http://localhost:3000 |
 | Swagger UI | documentation de l'API | http://localhost:8081 |
 | Mailpit | capte **tous** les e-mails sortants | http://localhost:8025 |
@@ -38,13 +38,13 @@ Tout tourne en local avec Docker : il ne faut aucune clé payante, car le LLM es
 
 ### Pourquoi ces choix
 - **pgvector plutôt que Qdrant** : une seule base PostgreSQL stocke les tickets et les vecteurs, et sert de source à Grafana. La recherche reste du SQL : voir la fonction `match_kb()`.
-- **Ollama dans la stack** : pas de clé d'API, et aucune donnée client ne sort de la machine. Le modèle `bge-m3` est multilingue, donc adapté au français. `qwen2.5:3b` tient sur un CPU.
+- **Ollama dans la stack** : pas de clé d'API, et aucune donnée client ne sort de la machine. Le modèle `bge-m3` est multilingue, donc adapté au français. `qwen2.5:1.5b` tient dans les 4-5 Go de RAM que Docker Desktop alloue par défaut : `qwen2.5:3b` y a été tué faute de mémoire pendant les tests.
 - **Sortie JSON structurée** : la requête envoie un schéma JSON dans le champ `format` d'Ollama. Le modèle ne peut répondre qu'avec les valeurs autorisées (les catégories et les priorités).
 - **Appels HTTP plutôt que les nœuds « AI » de n8n** : chaque requête au LLM est visible et modifiable dans n8n, ce qui aide à comprendre et à expliquer le fonctionnement.
 
 ## Installation
 
-Il faut Docker avec Compose, environ 10 Go de disque et 8 Go de RAM libres. Le premier démarrage télécharge environ 6 Go : les images Docker, puis les modèles Ollama.
+Il faut Docker avec Compose, environ 10 Go de disque et au moins 4,5 Go de RAM pour Docker. Le premier démarrage télécharge environ 5 Go : les images Docker, puis les modèles Ollama.
 
 ```bash
 cp .env.example .env
@@ -101,7 +101,7 @@ Le démarrage se déroule ainsi :
 3. **Répondre en tant qu'humain**, ce qui clôt le ticket et envoie la réponse au client par son canal d'origine :
 
    ```bash
-   source .env; curl -X POST localhost:5679/webhook/tickets/2/resolve -H "X-API-Key: $TICKETS_API_KEY" -H "Content-Type: application/json" -d '{"answer":"Le serveur a redémarré, l accès est rétabli.","agent":"Kevin"}'
+   source .env; curl -X POST localhost:5679/webhook/tickets/resolve -H "X-API-Key: $TICKETS_API_KEY" -H "Content-Type: application/json" -d '{"ticket_id":2,"answer":"Le serveur a redémarré, l accès est rétabli.","agent":"Kevin"}'
    ```
 
 4. **Canal e-mail** :
@@ -177,13 +177,7 @@ docker compose up -d
 **Réimporter les workflows du dépôt** : la commande ci-dessous écrase les modifications faites dans n8n.
 
 ```bash
-docker compose stop n8n && docker compose run --rm -e P04_FORCE_IMPORT=1 n8n
-```
-
-Arrête-la avec Ctrl+C une fois l'import terminé, puis redémarre n8n :
-
-```bash
-docker compose up -d n8n
+docker compose stop n8n && docker compose run --rm -e P04_FORCE_IMPORT=1 -e P04_IMPORT_ONLY=1 n8n && docker compose up -d n8n
 ```
 
 **Tout remettre à zéro** : cette commande supprime aussi les modèles téléchargés.
@@ -193,7 +187,9 @@ docker compose down -v
 ```
 
 ## Limites et pistes
-- Sur un CPU, un ticket prend environ 20 à 90 s. Un GPU ou une API (OpenAI, Mistral…) réduit beaucoup ce délai : il suffit de changer l'URL et le modèle dans les nœuds HTTP « Ollama · … ».
+- **Délais mesurés** sur un portable i7-6600U (2 cœurs, 2016), Docker Desktop avec 4,6 Go de RAM : de 1 à 2 minutes par ticket traité seul (environ 20 s de classification, le reste pour la réponse RAG). Comme Ollama traite une requête à la fois, trois tickets envoyés ensemble prennent environ 5 minutes.
+- **Qualité de rédaction** : un modèle de 1,5 milliard de paramètres classe bien mais rédige parfois une étape approximative. Avec plus de RAM, passe à `CHAT_MODEL=qwen2.5:3b` ou `qwen2.5:7b`. Un GPU ou une API (OpenAI, Mistral…) réduit aussi beaucoup les délais : il suffit de changer l'URL et le modèle dans les nœuds HTTP « Ollama · … ».
+- **Réponse en étapes** : le LLM renvoie une liste d'étapes, chacune avec le numéro de sa source, plutôt qu'un long texte. Un petit modèle contraint au JSON coupe sinon sa réponse au premier retour à la ligne. Le workflow assemble ensuite le texte et ajoute les citations [n].
 - La confiance est estimée par le LLM lui-même. Pour aller plus loin, on peut la croiser avec la similarité des sources, ou évaluer la classification sur un jeu de tickets annotés.
 - Le RAG de démonstration utilise 10 fiches. Pour une vraie base, ajoute un index HNSW sur `kb_chunks.embedding`.
 - WhatsApp n'est pas inclus, car il demande un compte WhatsApp Business. On l'ajouterait comme un quatrième canal, qui appellerait le même workflow `10 Traitement d'un ticket`.

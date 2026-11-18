@@ -8,7 +8,7 @@ info:
     Un ticket créé ici est enregistré (statut `recu`), puis traité en arrière-plan :
     classification par le LLM → réponse suggérée avec sources (RAG) → réponse automatique
     (`resolu`) ou escalade à un humain (`escalade`). Sur un CPU, le traitement prend en
-    général 20 à 90 secondes : interrogez `GET /tickets/{id}` pour suivre l'avancement.
+    général 20 à 90 secondes : interrogez `GET /tickets?id=…` pour suivre l'avancement.
 
     Toutes les routes exigent l'en-tête `X-API-Key` (valeur `TICKETS_API_KEY` du `.env`).
 servers:
@@ -22,6 +22,25 @@ tags:
 
 paths:
   /tickets:
+    get:
+      tags: [Tickets]
+      summary: Lire un ticket (statut, classification, réponse, sources, horodatages)
+      operationId: getTicket
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+          example: 1
+      responses:
+        '200':
+          description: Le ticket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
     post:
       tags: [Tickets]
       summary: Créer un ticket
@@ -66,23 +85,7 @@ paths:
               schema: { $ref: '#/components/schemas/ValidationError' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
-  /tickets/{id}:
-    get:
-      tags: [Tickets]
-      summary: Lire un ticket (statut, classification, réponse, sources, horodatages)
-      operationId: getTicket
-      parameters:
-        - $ref: '#/components/parameters/TicketId'
-      responses:
-        '200':
-          description: Le ticket
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Ticket' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-
-  /tickets/{id}/resolve:
+  /tickets/resolve:
     post:
       tags: [Tickets]
       summary: Clore un ticket (action d'un humain)
@@ -90,14 +93,13 @@ paths:
         Passe le ticket au statut `resolu`. Si `answer` est fourni, la réponse est enregistrée
         et envoyée au client par son canal d'origine (e-mail ou Telegram).
       operationId: resolveTicket
-      parameters:
-        - $ref: '#/components/parameters/TicketId'
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/TicketResolve' }
             example:
+              ticket_id: 2
               answer: Nous avons redémarré le serveur, l'accès est rétabli. Merci de votre patience.
               agent: Kevin
               note: Redémarrage du worker Odoo.sh
@@ -109,7 +111,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  ticket_id: { type: integer, example: 12 }
+                  ticket_id: { type: integer, example: 2 }
                   status: { type: string, example: resolu }
                   resolved_at: { type: string, format: date-time }
                   answer_sent: { type: boolean, description: Réponse envoyée par e-mail ou Telegram }
@@ -156,13 +158,6 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
-
-  parameters:
-    TicketId:
-      name: id
-      in: path
-      required: true
-      schema: { type: integer, minimum: 1 }
 
   responses:
     NotFound:
@@ -213,7 +208,7 @@ components:
         links:
           type: object
           properties:
-            self: { type: string, example: 'http://localhost:5679/webhook/tickets/12' }
+            self: { type: string, example: 'http://localhost:5679/webhook/tickets?id=12' }
 
     Source:
       type: object
@@ -265,7 +260,9 @@ components:
 
     TicketResolve:
       type: object
+      required: [ticket_id]
       properties:
+        ticket_id: { type: integer, minimum: 1 }
         answer: { type: string, description: Réponse à envoyer au client (facultatif) }
         agent: { type: string, description: Nom de l'agent }
         note: { type: string, description: Note interne de résolution }

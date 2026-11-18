@@ -3,7 +3,9 @@
 # clé d'API), importe et publie les workflows, puis lance l'ingestion de la base de
 # connaissances si elle est vide. Les démarrages suivants lancent seulement n8n.
 # Pour réimporter les workflows du dépôt (écrase tes modifications dans n8n) :
-#   docker compose run --rm -e P04_FORCE_IMPORT=1 n8n   (voir README)
+#   docker compose stop n8n
+#   docker compose run --rm -e P04_FORCE_IMPORT=1 -e P04_IMPORT_ONLY=1 n8n
+#   docker compose up -d n8n
 set -e
 
 MARKER=/home/node/.n8n/.p04-bootstrapped
@@ -43,6 +45,8 @@ if [ ! -f "$MARKER" ] || [ "${P04_FORCE_IMPORT:-0}" = "1" ]; then
   touch "$MARKER"
   echo "[p04] Bootstrap terminé."
 fi
+
+[ "${P04_IMPORT_ONLY:-0}" = "1" ] && exit 0
 
 # Ingestion de la base de connaissances en arrière-plan (ignorée si déjà indexée)
 (

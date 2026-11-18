@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Envoi d'une réponse au client\nEntrée : `{ ticket_id, channel, contact, subject, text }`.\n- **email** → SMTP (credential *P04 SMTP Mailpit* : tout arrive dans Mailpit en local) ;\n- **telegram** → `sendMessage` au `chat_id` du client ;\n- **webhook** → rien à envoyer : l'appelant lit la réponse avec `GET /webhook/tickets/{id}`.",
+        "content": "## Envoi d'une réponse au client\nEntrée : `{ ticket_id, channel, contact, subject, text }`.\n- **email** → SMTP (credential *P04 SMTP Mailpit* : tout arrive dans Mailpit en local) ;\n- **telegram** → `sendMessage` au `chat_id` du client ;\n- **webhook** → rien à envoyer : l'appelant lit la réponse avec `GET /webhook/tickets?id=…`.",
         "height": 260,
         "width": 460
       },
@@ -41,7 +41,7 @@
           },
           "conditions": [
             {
-              "id": "bb0cbbca-2db1-43c0-a78b-4d4421fcde22",
+              "id": "e7c074a1-cff3-4647-bddd-ea1ca167bb23",
               "leftValue": "={{ $json.channel === 'email' && !!$json.contact }}",
               "rightValue": "",
               "operator": {
@@ -103,7 +103,7 @@
           },
           "conditions": [
             {
-              "id": "764387ec-443b-444f-8bbe-eeeda4025993",
+              "id": "5dff1149-5382-4f80-b1e6-a90e95624a1c",
               "leftValue": "={{ $json.channel === 'telegram' && !!$json.contact && !!$env.TELEGRAM_BOT_TOKEN }}",
               "rightValue": "",
               "operator": {
@@ -150,7 +150,7 @@
     },
     {
       "parameters": {
-        "jsCode": "return $input.all().map(i => ({ json: { ticket_id: i.json.ticket_id, channel: i.json.channel, sent: false,\n  info: 'canal webhook : réponse disponible via GET /webhook/tickets/{id}' } }));"
+        "jsCode": "return $input.all().map(i => ({ json: { ticket_id: i.json.ticket_id, channel: i.json.channel, sent: false,\n  info: 'canal webhook : réponse disponible via GET /webhook/tickets?id=…' } }));"
       },
       "id": "1a95cbb5-d526-5ed7-973e-3017a5c030c9",
       "name": "Rien à envoyer",
