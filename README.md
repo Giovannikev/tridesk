@@ -1,6 +1,8 @@
-# P04 – Assistant de support et tri automatique de tickets (n8n, RAG, LLM)
+<p align="center"><img src="branding/banner.svg" alt="TriDesk — tri et réponse automatiques des tickets de support" width="100%"></p>
 
-Projet L3 « Automatisation + IA ». L'assistant reçoit les demandes de support d'un intégrateur **Odoo** par trois canaux (API webhook, e-mail, Telegram). Pour chaque demande, il :
+# TriDesk — Assistant de support et tri automatique de tickets (n8n, RAG, LLM)
+
+Projet **P04** de veille technologique, ESTI Licence 3, domaine « Automatisation + IA ». TriDesk reçoit les demandes de support d'un intégrateur **Odoo** par trois canaux (API webhook, e-mail, Telegram). Pour chaque demande, il :
 1. classe la demande par **catégorie** et **priorité**, avec un **indice de confiance** ;
 2. rédige une **réponse tirée de la base de connaissances** et cite ses sources (RAG) ;
 3. répond lui-même au client, ou **fait remonter le cas à un humain** s'il est complexe.
@@ -8,6 +10,18 @@ Projet L3 « Automatisation + IA ». L'assistant reçoit les demandes de support
 Un **tableau de bord Grafana** suit les délais de traitement.
 
 Tout tourne en local avec Docker : il ne faut aucune clé payante, car le LLM est **Ollama**.
+
+## Équipe
+
+| Membre | Rôle |
+|---|---|
+| **RANDRIANARIJAONA** Giovanni Kevin | Chef de projet, infrastructure et DevOps |
+| **RABEMANANJARA AINASON** Misandratraharimbola Opportun | Développement et sécurité |
+| **RASOANAIVO** Harena Fitiavana | Documentation et communication |
+| **RAZAFINIRINA** Carenne Fanoëlah | Documentation et communication |
+| **RAMAMONJISOA** Miraniaina | Documentation et communication |
+
+L'identité visuelle (logo, couleurs, typographies) est décrite dans [`branding/charte-graphique.md`](branding/charte-graphique.md).
 
 ## Architecture
 
@@ -201,6 +215,7 @@ Voir [`docs/fiche-veille.md`](docs/fiche-veille.md) : état de l'art, comparaiso
 | `tests/` | tests unitaires (logique des workflows) et tests SQL |
 | `.github/workflows/ci.yml` | intégration continue et analyses de sécurité |
 | `docs/` | fiche de veille |
+| `branding/` | logo, bannière, charte graphique |
 
 ## Opérations courantes
 

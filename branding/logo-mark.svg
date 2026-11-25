@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="TriDesk">
+  <rect width="64" height="64" rx="14" fill="#0E1726"/>
+  <!-- Trois tickets triés par priorité : le premier, en laiton, est traité -->
+  <rect x="14" y="19" width="30" height="6" rx="3" fill="#C9A45C"/>
+  <circle cx="50" cy="22" r="3" fill="#C9A45C"/>
+  <rect x="14" y="29" width="24" height="6" rx="3" fill="#F3F5F8"/>
+  <rect x="14" y="39" width="16" height="6" rx="3" fill="#F3F5F8" opacity="0.55"/>
+</svg>
