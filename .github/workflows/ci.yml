@@ -1,0 +1,96 @@
+# Intégration continue P04 : tests, validation de la stack et analyses de sécurité.
+# Un échec sur un job bloquant empêche la fusion de la pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Logique métier des workflows n8n (classification, RAG, escalade, canaux) et cohérence du dépôt
+  tests-unitaires:
+    name: Tests unitaires (workflows n8n)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test --test-reporter=spec 'tests/unit/*.test.mjs'
+
+  # Schéma PostgreSQL : contraintes, trigger d'audit, match_kb(), vue Grafana, rôle en lecture seule
+  tests-sql:
+    name: Tests SQL (PostgreSQL + pgvector)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./tests/sql/run.sh
+
+  # La stack, la documentation d'API et les scripts sont valides
+  validation:
+    name: Compose, OpenAPI et scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose config
+        run: cp .env.example .env && docker compose config --quiet
+      - name: OpenAPI (Redocly)
+        run: npx --yes @redocly/cli@1.25.11 lint --extends=minimal openapi/openapi.yaml
+      - name: ShellCheck
+        run: shellcheck --severity=warning scripts/*.sh tests/sql/run.sh n8n/bootstrap.sh postgres/init/*.sh
+
+  # Aucun secret (mot de passe, jeton, clé) dans le code ni dans l'historique Git — bloquant
+  secrets:
+    name: Secrets (Gitleaks)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Installer Gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
+            | tar -xz -C /usr/local/bin gitleaks
+      - run: gitleaks git . --redact --verbose --exit-code 1
+
+  # Vulnérabilités et mauvaises configurations du dépôt — bloquant sur HIGH/CRITICAL
+  trivy-depot:
+    name: Sécurité du dépôt (Trivy)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: >
+          docker run --rm -v "$PWD:/src" aquasec/trivy:0.57.1
+          fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 /src
+
+  # Images Docker utilisées par la stack : rapport (non bloquant, ce sont des images tierces
+  # dont on ne contrôle pas le contenu ; on choisit leur version dans docker-compose.yml)
+  trivy-images:
+    name: Images Docker (Trivy, rapport)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scanner chaque image de docker-compose.yml
+        run: |
+          cp .env.example .env
+          mkdir -p rapports
+          for img in $(docker compose config --images | sort -u); do
+            echo "::group::$img"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 \
+              image --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$img" \
+              | tee "rapports/$(echo "$img" | tr '/:' '__').txt"
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapports-trivy-images
+          path: rapports/

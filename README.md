@@ -146,6 +146,45 @@ Le démarrage se déroule ainsi :
 
 **Horodatages** (table `tickets`) : `received_at`, `classified_at`, `answered_at`, `escalated_at` et `resolved_at`. Chaque changement de statut est aussi enregistré dans `ticket_events` par un trigger. La vue `v_ticket_durations` calcule les délais en secondes pour Grafana.
 
+## Tests et intégration continue
+
+Les tests ne demandent ni Ollama ni n8n : ils s'exécutent en quelques secondes.
+
+**Tests unitaires** (Node 22, aucune dépendance). Ils exécutent le code des nœuds « Code » **tel qu'il est stocké dans les workflows** et couvrent :
+- la validation de l'API et la normalisation des e-mails ;
+- le post-traitement de la classification ;
+- le filtrage des sources et les citations RAG ;
+- les cinq règles d'escalade ;
+- le découpage de la base de connaissances.
+
+Ils vérifient aussi la cohérence des workflows : connexions, sous-workflows, credentials, protection des webhooks par clé d'API et absence de secret en clair.
+
+```bash
+node --test 'tests/unit/*.test.mjs'
+```
+
+**Tests SQL**. Le script démarre une base pgvector jetable, initialisée comme dans `docker-compose.yml`. Il contrôle les contraintes, le trigger d'audit, `match_kb()`, la vue des délais, le rôle Grafana en lecture seule et les données de démo :
+
+```bash
+./tests/sql/run.sh
+```
+
+**Test de bout en bout** : `./scripts/demo.sh`, sur la stack démarrée.
+
+**CI GitHub Actions** (`.github/workflows/ci.yml`), à chaque push et pull request :
+
+| Job | Rôle | Bloquant |
+|---|---|---|
+| Tests unitaires, Tests SQL | ci-dessus | oui |
+| Compose, OpenAPI, scripts | `docker compose config`, lint Redocly, ShellCheck | oui |
+| Gitleaks | aucun secret dans le code ni dans l'historique Git | oui |
+| Trivy (dépôt) | vulnérabilités, secrets, mauvaises configurations HIGH/CRITICAL | oui |
+| Trivy (images) | rapport sur les images Docker tierces, téléchargeable en artefact | non |
+
+## Veille technologique
+
+Voir [`docs/fiche-veille.md`](docs/fiche-veille.md) : état de l'art, comparaison n8n / Make / Zapier, pgvector / Qdrant / ChromaDB et Ollama / OpenAI / Mistral, justification des choix, sources.
+
 ## Contenu du dépôt
 
 | Chemin | Contenu |
@@ -159,6 +198,9 @@ Le démarrage se déroule ainsi :
 | `openapi/openapi.yaml` | spécification OpenAPI 3 de l'API |
 | `grafana/` | source de données et tableau de bord provisionnés |
 | `scripts/` | démo, envoi d'un e-mail de test |
+| `tests/` | tests unitaires (logique des workflows) et tests SQL |
+| `.github/workflows/ci.yml` | intégration continue et analyses de sécurité |
+| `docs/` | fiche de veille |
 
 ## Opérations courantes
 
