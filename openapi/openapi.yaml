@@ -229,8 +229,8 @@ components:
         message: { type: string }
         customer_name: { type: string, nullable: true }
         customer_contact: { type: string, nullable: true }
-        category: { allOf: [{ $ref: '#/components/schemas/Category' }], nullable: true }
-        priority: { allOf: [{ $ref: '#/components/schemas/Priority' }], nullable: true }
+        category: { type: string, nullable: true, allOf: [{ $ref: '#/components/schemas/Category' }], description: null tant que le ticket n'est pas classé }
+        priority: { type: string, nullable: true, allOf: [{ $ref: '#/components/schemas/Priority' }], description: null tant que le ticket n'est pas classé }
         confidence: { type: number, minimum: 0, maximum: 1, nullable: true }
         wants_human: { type: boolean }
         summary: { type: string, nullable: true }
